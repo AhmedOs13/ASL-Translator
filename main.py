@@ -9,7 +9,7 @@ import os
 
 # Model configuration
 MODEL_URL = "https://drive.google.com/uc?export=download&id=17BSlxnvZMWrAf3g1l1Mn0pWkDo4PoOn9"
-MODEL_PATH = "model_alphabet_transfer.keras"
+MODEL_PATH = "model.keras"
 
 # Model loading with caching
 @st.cache_resource
