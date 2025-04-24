@@ -1,269 +1,297 @@
-import streamlit as st
 import cv2
 import numpy as np
 import mediapipe as mp
-import tensorflow as tf
 from tensorflow.keras.models import load_model
-from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration
-import av
-import os
-import time
+import tkinter as tk
+from PIL import Image, ImageTk
+import threading
+import queue
+from tkinter import ttk
 
-# Check for OpenCV installation
-try:
-    cv2.__version__
-    st.success("OpenCV loaded successfully")
-except ImportError as e:
-    st.error(f"Failed to import OpenCV: {e}")
-    st.error("Ensure 'opencv-python-headless' is listed in requirements.txt")
-    st.stop()
+# Load pre-trained models
+arabic_model = load_model('arabic_sign_language_model.h5')  # Ensure correct path
+english_model = load_model('english_sl_model_v2.h5')  # Ensure correct path
 
-# Load the trained model
-model_path = "arabic_sign_language_model.h5"
-if not os.path.exists(model_path):
-    st.error(f"Model file '{model_path}' not found. Please upload it to the app directory.")
-    st.stop()
+# Initialize MediaPipe Hands
+mp_hands = mp.solutions.hands
+hands = mp_hands.Hands(static_image_mode=False, max_num_hands=1, min_detection_confidence=0.5)
 
-try:
-    model = load_model(model_path)
-    st.success("Model loaded successfully")
-except Exception as e:
-    st.error(f"Error loading model: {e}")
-    st.stop()
 
-# Set up MediaPipe
-try:
-    mp_hands = mp.solutions.hands
-    mp_drawing = mp.solutions.drawing_utils
-    hands = mp_hands.Hands(static_image_mode=False, max_num_hands=1, min_detection_confidence=0.5)
-    st.success("MediaPipe initialized")
-except Exception as e:
-    st.error(f"Error initializing MediaPipe: {e}")
-    st.stop()
-
-# Function to extract and scale landmarks
+# Extract and scale hand landmarks for model input
 def extract_and_scale_landmarks(image, img_size=400, padding=50):
-    try:
-        # Lower resolution to reduce processing load
-        image = cv2.resize(image, (320, 240))
-        h, w, _ = image.shape
-        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        results = hands.process(image_rgb)
+    """
+    Extracts hand landmarks from an image, scales, and centers them for model input.
 
-        if not results.multi_hand_landmarks:
-            return np.zeros(63), image, False
+    Args:
+        image: Input image (BGR format).
+        img_size (int): Target size for scaled landmarks.
+        padding (int): Padding around the hand bounding box.
 
-        landmarks = results.multi_hand_landmarks[0]
-        handedness = "Right"
-        if results.multi_handedness and len(results.multi_handedness) > 0:
-            handedness = results.multi_handedness[0].classification[0].label
+    Returns:
+        tuple: (normalized landmarks, processed image, hand detection flag)
+    """
+    h, w, _ = image.shape
+    image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    results = hands.process(image_rgb)
 
-        if handedness == "Left":
-            image = cv2.flip(image, 1)
-            for landmark in landmarks.landmark:
-                landmark.x = 1 - landmark.x
-
-        points = [(int(l.x * w), int(l.y * h)) for l in landmarks.landmark]
-        x_min, y_min = np.min(points, axis=0)
-        x_max, y_max = np.max(points, axis=0)
-
-        hand_width, hand_height = x_max - x_min, y_max - y_min
-        if hand_width < 5 or hand_height < 5:  # Adjusted for smaller resolution
-            return np.zeros(63), image, False
-
-        x_min, y_min = max(0, x_min - padding), max(0, y_min - padding)
-        x_max, y_max = min(w, x_max + padding), min(h, y_max + padding)
-
-        hand_width, hand_height = x_max - x_min, y_max - y_min
-        scale = (img_size - 2 * padding) / max(hand_width, hand_height)
-        offset_x = (img_size - hand_width * scale) / 2
-        offset_y = (img_size - hand_height * scale) / 2
-
-        scaled_points = [
-            (int((x - x_min) * scale + offset_x), int((y - y_min) * scale + offset_y))
-            for x, y in points
-        ]
-
-        normalized_points = []
-        for x, y in scaled_points:
-            normalized_points.extend([x / img_size, y / img_size, 0.0])
-
-        return np.array(normalized_points), image, True
-    except Exception as e:
-        st.error(f"Error in extract_and_scale_landmarks: {e}")
+    if not results.multi_hand_landmarks:
         return np.zeros(63), image, False
 
-# Label mapping
-labels = ['ع', 'ال', 'ا', 'ب', 'ض', 'د', 'ف', 'غ', 'ح', 'ه', 'ج', 'ك', 'خ', 'لا', 'ل', 'م', 'ن', 'ق', 'ر', 'ص', 'س',
-          'ش', 'ط', 'ت', 'ة', 'ذ', 'ث', 'و', 'ي', 'ظ', 'ز']
-label_map = {i: label for i, label in enumerate(labels)}
+    landmarks = results.multi_hand_landmarks[0]
+    handedness = "Right"
+    if results.multi_handedness and len(results.multi_handedness) > 0:
+        handedness = results.multi_handedness[0].classification[0].label
 
-# Function to process a static image (fallback)
-def process_static_image(image):
-    try:
-        img = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
-        img = cv2.flip(img, 1)
+    # Flip image if left hand is detected
+    if handedness == "Left":
+        image = cv2.flip(image, 1)
+        for landmark in landmarks.landmark:
+            landmark.x = 1 - landmark.x
 
-        landmarks, img_processed, hand_detected = extract_and_scale_landmarks(img)
+    # Extract landmark coordinates
+    points = [(int(l.x * w), int(l.y * h)) for l in landmarks.landmark]
+    x_min, y_min = np.min(points, axis=0)
+    x_max, y_max = np.max(points, axis=0)
 
-        if hand_detected:
-            landmarks = landmarks.reshape(1, 63)
-            prediction = model.predict(landmarks, verbose=0)
-            predicted_label = np.argmax(prediction, axis=1)[0]
-            confidence = np.max(prediction) * 100
-            letter = label_map[predicted_label]
-        else:
-            letter = "None"
-            confidence = 0.0
-            cv2.putText(img_processed, "No hand detected", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+    hand_width, hand_height = x_max - x_min, y_max - y_min
+    if hand_width < 10 or hand_height < 10:
+        return np.zeros(63), image, False
 
-        img_rgb = cv2.cvtColor(img_processed, cv2.COLOR_BGR2RGB)
-        results = hands.process(img_rgb)
-        if results.multi_hand_landmarks:
-            for hand_landmarks in results.multi_hand_landmarks:
-                mp_drawing.draw_landmarks(img_processed, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+    x_min, y_min = max(0, x_min - padding), max(0, y_min - padding)
+    x_max, y_max = min(w, x_max + padding), min(h, y_max + padding)
 
-        return img_processed, letter, confidence
-    except Exception as e:
-        st.error(f"Error in process_static_image: {e}")
-        return None, "Error", 0.0
+    hand_width, hand_height = x_max - x_min, y_max - y_min
+    scale = (img_size - 2 * padding) / max(hand_width, hand_height)
+    offset_x = (img_size - hand_width * scale) / 2
+    offset_y = (img_size - hand_height * scale) / 2
 
-# Video processor class for streamlit-webrtc
-class SignLanguageProcessor(VideoProcessorBase):
-    def __init__(self):
-        self.current_letter = "None"
+    scaled_points = [
+        (int((x - x_min) * scale + offset_x), int((y - y_min) * scale + offset_y))
+        for x, y in points
+    ]
+
+    normalized_points = []
+    for x, y in scaled_points:
+        normalized_points.extend([x / img_size, y / img_size, 0.0])
+
+    return np.array(normalized_points), image, True
+
+
+# Scale the video frame for display
+def scale_frame(frame, scale_factor=1.5):
+    """
+    Scales the input frame by a given factor.
+
+    Args:
+        frame: Input image frame.
+        scale_factor (float): Scaling factor for resizing.
+
+    Returns:
+        Scaled frame.
+    """
+    height, width = frame.shape[:2]
+    new_height, new_width = int(height * scale_factor), int(width * scale_factor)
+    return cv2.resize(frame, (new_width, new_height))
+
+
+# Define label mappings for Arabic and English sign language
+arabic_labels = ['ع', 'ال', 'ا', 'ب', 'ض', 'د', 'ف', 'غ', 'ح', 'ه', 'ج', 'ك', 'خ', 'لا', 'ل', 'م', 'ن', 'ق', 'ر', 'ص',
+                 'س',
+                 'ش', 'ط', 'ت', 'ة', 'ذ', 'ث', 'و', 'ي', 'ظ', 'ز']
+english_labels = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T',
+                  'U',
+                  'V', 'W', 'X', 'Y', 'Z']
+
+arabic_label_map = {i: label for i, label in enumerate(arabic_labels)}
+english_label_map = {i: label for i, label in enumerate(english_labels)}
+
+
+# GUI class for sign language recognition
+class SignLanguageGUI:
+    def __init__(self, root):
+        """
+        Initializes the GUI for sign language recognition.
+
+        Args:
+            root: Tkinter root window.
+        """
+        self.root = root
+        self.root.title("Sign Language Recognition")
+        self.root.geometry("800x700")
+
+        # Initialize variables
+        self.sentence = ""
+        self.current_letter = ""
         self.current_confidence = 0.0
-        self.sentence = st.session_state.get("sentence", "")
-        self.error = None
-        self.last_processed = time.time()
+        self.running = True
+        self.frame_queue = queue.Queue(maxsize=1)
+        self.current_model = arabic_model
+        self.current_label_map = arabic_label_map
+        self.model_name = "Arabic"
 
-    def update_sentence(self):
-        st.session_state.sentence = self.sentence
+        # Header
+        self.header_label = tk.Label(root, text="SilenTalker", font=("Arial", 24, "bold"))
+        self.header_label.pack(pady=10)
 
-    def recv(self, frame):
-        try:
-            start_time = time.time()
-            img = frame.to_ndarray(format="bgr")
-            img = cv2.flip(img, 1)
+        # Model selection dropdown
+        self.model_label = tk.Label(root, text="Select Language Model:", font=("Arial", 12))
+        self.model_label.pack()
+        self.model_var = tk.StringVar(value="Arabic")
+        self.model_dropdown = ttk.Combobox(root, textvariable=self.model_var, values=["Arabic", "English"],
+                                           state="readonly")
+        self.model_dropdown.pack(pady=5)
+        self.model_dropdown.bind("<<ComboboxSelected>>", self.switch_model)
 
-            landmarks, img_processed, hand_detected = extract_and_scale_landmarks(img)
+        # GUI elements
+        self.video_label = tk.Label(root)
+        self.video_label.pack(pady=10)
+
+        self.letter_label = tk.Label(root, text="Predicted Letter: None", font=("Arial", 14))
+        self.letter_label.pack()
+
+        self.sentence_label = tk.Label(root, text="Sentence: ", font=("Arial", 14))
+        self.sentence_label.pack(pady=10)
+
+        self.sentence_text = tk.Text(root, height=1, width=50, font=("Arial", 15))
+        self.sentence_text.pack()
+        self.sentence_text.config(state='disabled')
+
+        # Footer
+        self.footer_label = tk.Label(root, text="Developed by Minia University, Biomedical Engineering Department", font=("Arial", 13))
+        self.footer_label.pack(pady=10)
+
+        # Key bindings
+        self.root.bind('<Return>', self.add_letter)
+        self.root.bind('<BackSpace>', self.backspace)
+        self.root.bind('<space>', self.add_space)
+
+        # Start video processing in a separate thread
+        self.cap = cv2.VideoCapture(0)
+        if not self.cap.isOpened():
+            self.letter_label.config(text="Error: Could not open webcam.")
+            return
+
+        self.video_thread = threading.Thread(target=self.process_video, daemon=True)
+        self.video_thread.start()
+
+        # Start GUI updates
+        self.update_gui()
+
+    def switch_model(self, event):
+        """Switches between Arabic and English models based on dropdown selection."""
+        selected_model = self.model_var.get()
+        if selected_model == "Arabic":
+            self.current_model = arabic_model
+            self.current_label_map = arabic_label_map
+            self.model_name = "Arabic"
+        else:
+            self.current_model = english_model
+            self.current_label_map = english_label_map
+            self.model_name = "English"
+        self.sentence = ""  # Reset sentence on model switch
+        self.update_sentence()
+
+    def process_video(self):
+        """Processes webcam video to detect and classify hand signs."""
+        while self.running:
+            ret, frame = self.cap.read()
+            if not ret:
+                continue
+
+            # Flip frame horizontally
+            frame = cv2.flip(frame, 1)
+
+            # Extract landmarks
+            landmarks, frame_processed, hand_detected = extract_and_scale_landmarks(frame, img_size=400, padding=50)
 
             if hand_detected:
+                # Predict using the selected model
                 landmarks = landmarks.reshape(1, 63)
-                prediction = model.predict(landmarks, verbose=0)
+                prediction = self.current_model.predict(landmarks, verbose=0)
                 predicted_label = np.argmax(prediction, axis=1)[0]
                 confidence = np.max(prediction) * 100
-                self.current_letter = label_map[predicted_label]
+                predicted_letter = self.current_label_map[predicted_label]
+
+                self.current_letter = predicted_letter
                 self.current_confidence = confidence
             else:
                 self.current_letter = "None"
                 self.current_confidence = 0.0
-                cv2.putText(img_processed, "No hand detected", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                frame_processed = scale_frame(frame_processed, scale_factor=1.5)
+                cv2.putText(frame_processed, "No hand detected", (50, 100), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 255), 3,
+                            cv2.LINE_AA)
 
-            img_rgb = cv2.cvtColor(img_processed, cv2.COLOR_BGR2RGB)
-            results = hands.process(img_rgb)
-            if results.multi_hand_landmarks:
-                for hand_landmarks in results.multi_hand_landmarks:
-                    mp_drawing.draw_landmarks(img_processed, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+            # Convert frame for GUI display
+            frame_processed = scale_frame(frame_processed, scale_factor=1.5)
+            frame_rgb = cv2.cvtColor(frame_processed, cv2.COLOR_BGR2RGB)
+            image = Image.fromarray(frame_rgb)
+            image = image.resize((640, 480), Image.LANCZOS)
+            photo = ImageTk.PhotoImage(image)
 
-            # Log processing time
-            processing_time = time.time() - start_time
-            if processing_time > 0.1:  # Warn if processing takes too long
-                st.warning(f"Frame processing took {processing_time:.2f}s, which may cause lag.")
+            # Update frame queue
+            if self.frame_queue.full():
+                self.frame_queue.get()
+            self.frame_queue.put(photo)
 
-            self.last_processed = time.time()
-            return av.VideoFrame.from_ndarray(img_processed, format="bgr")
+    def update_gui(self):
+        """Updates the GUI with the latest video frame and predictions."""
+        try:
+            # Update video feed
+            if not self.frame_queue.empty():
+                photo = self.frame_queue.get()
+                self.video_label.config(image=photo)
+                self.video_label.image = photo  # Keep reference
+
+            # Update text displays
+            letter_text = f"Predicted Letter: {self.current_letter} ({self.current_confidence:.2f}%) [{self.model_name}]"
+            self.letter_label.config(text=letter_text)
+            self.sentence_text.config(state='normal')
+            self.sentence_text.delete(1.0, tk.END)
+            self.sentence_text.insert(tk.END, self.sentence)
+            self.sentence_text.config(state='disabled')
+
         except Exception as e:
-            self.error = str(e)
-            st.error(f"WebRTC processing error: {e}")
-            return frame
+            print(f"GUI Update Error: {e}")
 
-# Streamlit app
-def main():
-    # Initialize session state
-    if "sentence" not in st.session_state:
-        st.session_state.sentence = ""
+        # Schedule next update
+        if self.running:
+            self.root.after(10, self.update_gui)
 
-    # Header
-    st.title("SilenTalker: Arabic Sign Language Recognition")
-    st.write("Use your webcam to recognize Arabic sign language letters and build sentences.")
+    def add_letter(self, event):
+        """Adds the predicted letter to the sentence if confidence is sufficient."""
+        if self.current_letter != "None" and self.current_confidence > 50:
+            self.sentence += self.current_letter
+            self.update_sentence()
 
-    # Layout
-    col1, col2 = st.columns([2, 1])
+    def backspace(self, event):
+        """Removes the last character from the sentence."""
+        if self.sentence:
+            self.sentence = self.sentence[:-1]
+            self.update_sentence()
 
-    with col1:
-        st.subheader("Webcam Feed")
-        webrtc_ctx = webrtc_streamer(
-            key="sign-language",
-            video_processor_factory=SignLanguageProcessor,
-            rtc_configuration=RTCConfiguration({
-                "iceServers": [
-                    {"urls": ["stun:stun.l.google.com:19302"]},
-                    {"urls": ["stun:stun1.l.google.com:19302"]},
-                    {"urls": ["stun:stun2.l.google.com:19302"]}
-                ]
-            }),
-            media_stream_constraints={
-                "video": {
-                    "width": {"ideal": 320},
-                    "height": {"ideal": 240},
-                    "frameRate": {"ideal": 15}
-                },
-                "audio": False
-            },
-            async_processing=True
-        )
-        if webrtc_ctx.state.playing:
-            st.success("Webcam is active")
-            processor = webrtc_ctx.video_processor
-            if processor and (time.time() - processor.last_processed) > 2:
-                st.warning("No frames processed recently. Stream may be stuck.")
-        else:
-            st.warning("Webcam is not active. Please allow camera access in your browser or check HTTPS.")
+    def add_space(self, event):
+        """Adds a space to the sentence."""
+        self.sentence += " "
+        self.update_sentence()
 
-    with col2:
-        st.subheader("Prediction")
-        processor = webrtc_ctx.video_processor if webrtc_ctx and webrtc_ctx.video_processor else None
-        prediction = "None (0.00%)"
-        if processor:
-            if processor.error:
-                st.error(f"WebRTC processing error: {processor.error}")
-            prediction = f"{processor.current_letter} ({processor.current_confidence:.2f}%)"
-        st.write(f"Predicted Letter: {prediction}")
+    def update_sentence(self):
+        """Updates the sentence display in the GUI."""
+        self.sentence_text.config(state='normal')
+        self.sentence_text.delete(1.0, tk.END)
+        self.sentence_text.insert(tk.END, self.sentence)
+        self.sentence_text.config(state='disabled')
 
-        if st.button("Add Letter"):
-            if processor and processor.current_letter != "None" and processor.current_confidence > 80:
-                processor.sentence += processor.current_letter
-                processor.update_sentence()
+    def destroy(self):
+        """Cleans up resources and closes the application."""
+        self.running = False
+        if self.cap.isOpened():
+            self.cap.release()
+        self.root.destroy()
 
-        if st.button("Backspace"):
-            if processor and processor.sentence:
-                processor.sentence = processor.sentence[:-1]
-                processor.update_sentence()
 
-        if st.button("Add Space"):
-            if processor:
-                processor.sentence += " "
-                processor.update_sentence()
-
-    # Sentence output
-    st.subheader("Sentence")
-    st.write(f"Sentence: {st.session_state.sentence}")
-
-    # Fallback: Static image upload
-    st.subheader("Test with a Static Image")
-    uploaded_image = st.file_uploader("Upload an image to test the model", type=["jpg", "png"])
-    if uploaded_image:
-        from PIL import Image
-        image = Image.open(uploaded_image)
-        st.image(image, caption="Uploaded Image")
-        img_processed, letter, confidence = process_static_image(image)
-        if img_processed is not None:
-            st.image(img_processed, caption="Processed Image")
-            st.write(f"Predicted Letter: {letter} ({confidence:.2f}%)")
-
-    # Footer
-    st.write("Developed by LINK Team")
-
+# Run the GUI
 if __name__ == "__main__":
-    main()
+    root = tk.Tk()
+    app = SignLanguageGUI(root)
+    root.protocol("WM_DELETE_WINDOW", app.destroy)
+    root.mainloop()
