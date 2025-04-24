@@ -110,7 +110,7 @@ class SignLanguageProcessor(VideoProcessorBase):
         if hand_detected:
             landmarks = landmarks.reshape(1, 63)
             prediction = model.predict(landmarks, verbose=0)
-            predicted_label = np.argmax(prediction, axis=1)[0]
+            predicted ulicy: predicted_label = np.argmax(prediction, axis=1)[0]
             confidence = np.max(prediction) * 100
             self.current_letter = label_map[predicted_label]
             self.current_confidence = confidence
@@ -129,94 +129,31 @@ class SignLanguageProcessor(VideoProcessorBase):
 
 # Streamlit app
 def main():
-    # Custom CSS
-    st.markdown(
-        """
-        <style>
-        .stApp {
-            max-width: 1200px;
-            margin: auto;
-            padding: 20px;
-            background: white;
-            border-radius: 10px;
-            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
-        }
-        .header {
-            color: #2c3e50;
-            text-align: center;
-            font-size: 2.5em;
-            margin-bottom: 20px;
-        }
-        .webcam-container {
-            border: 2px solid #3498db;
-            border-radius: 8px;
-            padding: 10px;
-            background: #ecf0f1;
-        }
-        .pred-box {
-            font-size: 1.5em;
-            color: #2c3e50;
-            background: #e8f4f8;
-            padding: 15px;
-            border-radius: 8px;
-            text-align: center;
-        }
-        .sent-box {
-            font-size: 1.2em;
-            color: #34495e;
-            background: #dfe6e9;
-            padding: 15px;
-            border-radius: 8px;
-            min-height: 50px;
-        }
-        .stButton>button {
-            background-color: #3498db;
-            color: white;
-            border-radius: 5px;
-            padding: 10px 20px;
-            font-size: 1.1em;
-        }
-        .stButton>button:hover {
-            background-color: #2980b9;
-        }
-        .footer {
-            text-align: center;
-            color: #7f8c8d;
-            font-size: 0.9em;
-            margin-top: 20px;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True
-    )
-
     # Initialize session state
     if "sentence" not in st.session_state:
         st.session_state.sentence = ""
 
     # Header
-    st.markdown("<h1 class='header'>SilenTalker: Arabic Sign Language Recognition</h1>", unsafe_allow_html=True)
-    st.markdown("Capture hand gestures via webcam to recognize Arabic letters and build sentences.")
+    st.title("SilenTalker: Arabic Sign Language Recognition")
+    st.write("Use your webcam to recognize Arabic sign language letters and build sentences.")
 
     # Layout
     col1, col2 = st.columns([2, 1])
 
     with col1:
-        st.markdown("<div class='webcam-container'>", unsafe_allow_html=True)
         webrtc_ctx = webrtc_streamer(
             key="sign-language",
             video_processor_factory=SignLanguageProcessor,
             rtc_configuration=RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}),
             media_stream_constraints={"video": True, "audio": False},
         )
-        st.markdown("</div>", unsafe_allow_html=True)
 
     with col2:
         processor = webrtc_ctx.video_processor if webrtc_ctx and webrtc_ctx.video_processor else None
         prediction = "None (0.00%)"
         if processor:
             prediction = f"{processor.current_letter} ({processor.current_confidence:.2f}%)"
-        st.markdown(f"<div class='pred-box'>Predicted Letter: {prediction}</div>", unsafe_allow_html=True)
+        st.write(f"Predicted Letter: {prediction}")
 
         if st.button("Add Letter"):
             if processor and processor.current_letter != "None" and processor.current_confidence > 80:
@@ -234,10 +171,10 @@ def main():
                 processor.update_sentence()
 
     # Sentence output
-    st.markdown(f"<div class='sent-box'>Sentence: {st.session_state.sentence}</div>", unsafe_allow_html=True)
+    st.write(f"Sentence: {st.session_state.sentence}")
 
     # Footer
-    st.markdown("<div class='footer'>Developed by LINK Team</div>", unsafe_allow_html=True)
+    st.write("Developed by LINK Team")
 
 if __name__ == "__main__":
     main()
