@@ -1,0 +1,23 @@
+Python
+
+pycache/ *.pyc *.pyo *.pyd .Python env/ venv/ ENV/
+
+Models
+
+*.h5
+
+IDEs and editors
+
+.vscode/ .idea/ *.sublime-project *.sublime-workspace
+
+OS generated files
+
+.DS_Store Thumbs.db
+
+Virtual environments
+
+*.venv
+
+Logs and temporary files
+
+*.log *.tmp temp/
