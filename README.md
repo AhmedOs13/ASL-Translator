@@ -22,8 +22,8 @@ SilenTalker is a real-time sign language recognition system that detects and cla
 1. **Clone the repository**:
 
    ```bash
-   git clone https://github.com/AhmedOs13/ASL-Translator.git
-   cd ASL-Translator
+   git clone https://github.com/AhmedOs13/Sign-Language-Recognition.git
+   cd Sign-Language-Recognition
    ```
 
 2. **Create a virtual environment** (optional but recommended):
