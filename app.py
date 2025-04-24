@@ -145,4 +145,93 @@ class SignLanguageProcessor(VideoProcessorBase):
             else:
                 self.current_letter = "None"
                 self.current_confidence = 0.0
-                cv2.putText(img_processed, "No hand detected", (10, 30), cv2.FONT
+                cv2.putText(img_processed, "No hand detected", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+
+            img_rgb = cv2.cvtColor(img_processed, cv2.COLOR_BGR2RGB)
+            results = hands.process(img_rgb)
+            if results.multi_hand_landmarks:
+                for hand_landmarks in results.multi_hand_landmarks:
+                    mp_drawing.draw_landmarks(img_processed, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+
+            return av.VideoFrame.from_ndarray(img_processed, format="bgr")
+        except Exception as e:
+            self.error = str(e)
+            st.error(f"WebRTC error: {e}")
+            return frame
+
+# Streamlit app
+def main():
+    # Initialize session state
+    if "sentence" not in st.session_state:
+        st.session_state.sentence = ""
+
+    # Header
+    st.title("SilenTalker: Arabic Sign Language Recognition")
+    st.write("Use your webcam to recognize Arabic sign language letters and build sentences.")
+
+    # Layout
+    col1, col2 = st.columns([2, 1])
+
+    with col1:
+        st.subheader("Webcam Feed")
+        webrtc_ctx = webrtc_streamer(
+            key="sign-language",
+            video_processor_factory=SignLanguageProcessor,
+            rtc_configuration=RTCConfiguration({
+                "iceServers": [
+                    {"urls": ["stun:stun.l.google.com:19302"]},
+                    {"urls": ["stun:stun1.l.google.com:19302"]},
+                    {"urls": ["stun:stun2.l.google.com:19302"]}
+                ]
+            }),
+            media_stream_constraints={"video": True, "audio": False},
+            async_processing=True
+        )
+        if webrtc_ctx.state.playing:
+            st.success("Webcam is active")
+        else:
+            st.warning("Webcam is not active. Please allow camera access in your browser or check HTTPS.")
+
+    with col2:
+        st.subheader("Prediction")
+        processor = webrtc_ctx.video_processor if webrtc_ctx and webrtc_ctx.video_processor else None
+        prediction = "None (0.00%)"
+        if processor:
+            if processor.error:
+                st.error(f"WebRTC processing error: {processor.error}")
+            prediction = f"{processor.current_letter} ({processor.current_confidence:.2f}%)"
+        st.write(f"Predicted Letter: {prediction}")
+
+        if st.button("Add Letter"):
+            if processor and processor.current_letter != "None" and processor.current_confidence > 80:
+                processor.sentence += processor.current_letter
+                processor.update_sentence()
+
+        if st.button("Backspace"):
+            if processor and processor.sentence:
+                processor.sentence = processor.sentence[:-1]
+                processor.update_sentence()
+
+        if st.button("Add Space"):
+            if processor:
+                processor.sentence += " "
+                processor.update_sentence()
+
+    # Sentence output
+    st.subheader("Sentence")
+    st.write(f"Sentence: {st.session_state.sentence}")
+
+    # Fallback: Static image upload
+    st.subheader("Test with a Static Image")
+    uploaded_image = st.file_uploader("Upload an image to test the model", type=["jpg", "png"])
+    if uploaded_image:
+        image = st.image(uploaded_image, caption="Uploaded Image")
+        img_processed, letter, confidence = process_static_image(image.image)
+        st.image(img_processed, caption="Processed Image")
+        st.write(f"Predicted Letter: {letter} ({confidence:.2f}%)")
+
+    # Footer
+    st.write("Developed by LINK Team")
+
+if __name__ == "__main__":
+    main()
