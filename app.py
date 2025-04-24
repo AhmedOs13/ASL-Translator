@@ -110,7 +110,7 @@ class SignLanguageProcessor(VideoProcessorBase):
         if hand_detected:
             landmarks = landmarks.reshape(1, 63)
             prediction = model.predict(landmarks, verbose=0)
-            predicted ulicy: predicted_label = np.argmax(prediction, axis=1)[0]
+            predicted_label = np.argmax(prediction, axis=1)[0]
             confidence = np.max(prediction) * 100
             self.current_letter = label_map[predicted_label]
             self.current_confidence = confidence
