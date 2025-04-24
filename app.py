@@ -1,16 +1,28 @@
-# Import libraries
+import streamlit as st
 import cv2
 import numpy as np
 import mediapipe as mp
 import tensorflow as tf
 from tensorflow.keras.models import load_model
-import streamlit as st
 from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration
 import av
 import os
 
+# Check for OpenCV installation
+try:
+    cv2.__version__
+    st.success("OpenCV loaded successfully")
+except ImportError as e:
+    st.error(f"Failed to import OpenCV: {e}")
+    st.error("Ensure 'opencv-python-headless' is listed in requirements.txt")
+    st.stop()
+
 # Load the trained model
-model_path = "arabic_sign_language_model.h5"  # Update to your model path
+model_path = "arabic_sign_language_model.h5"
+if not os.path.exists(model_path):
+    st.error(f"Model file '{model_path}' not found. Please upload it to the app directory.")
+    st.stop()
+
 try:
     model = load_model(model_path)
     st.success("Model loaded successfully")
@@ -19,9 +31,14 @@ except Exception as e:
     st.stop()
 
 # Set up MediaPipe
-mp_hands = mp.solutions.hands
-mp_drawing = mp.solutions.drawing_utils
-hands = mp_hands.Hands(static_image_mode=False, max_num_hands=1, min_detection_confidence=0.5)
+try:
+    mp_hands = mp.solutions.hands
+    mp_drawing = mp.solutions.drawing_utils
+    hands = mp_hands.Hands(static_image_mode=False, max_num_hands=1, min_detection_confidence=0.5)
+    st.success("MediaPipe initialized")
+except Exception as e:
+    st.error(f"Error initializing MediaPipe: {e}")
+    st.stop()
 
 # Function to extract and scale landmarks
 def extract_and_scale_landmarks(image, img_size=400, padding=50):
@@ -37,7 +54,6 @@ def extract_and_scale_landmarks(image, img_size=400, padding=50):
     if results.multi_handedness and len(results.multi_handedness) > 0:
         handedness = results.multi_handedness[0].classification[0].label
 
-    # Flip image if left hand detected
     if handedness == "Left":
         image = cv2.flip(image, 1)
         for landmark in landmarks.landmark:
@@ -87,9 +103,8 @@ class SignLanguageProcessor(VideoProcessorBase):
 
     def recv(self, frame):
         img = frame.to_ndarray(format="bgr")
-        img = cv2.flip(img, 1)  # Flip frame
+        img = cv2.flip(img, 1)
 
-        # Extract landmarks
         landmarks, img_processed, hand_detected = extract_and_scale_landmarks(img)
 
         if hand_detected:
@@ -104,7 +119,6 @@ class SignLanguageProcessor(VideoProcessorBase):
             self.current_confidence = 0.0
             cv2.putText(img_processed, "No hand detected", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
 
-        # Draw landmarks
         img_rgb = cv2.cvtColor(img_processed, cv2.COLOR_BGR2RGB)
         results = hands.process(img_rgb)
         if results.multi_hand_landmarks:
@@ -115,14 +129,10 @@ class SignLanguageProcessor(VideoProcessorBase):
 
 # Streamlit app
 def main():
-    # Custom CSS for modern UI
+    # Custom CSS
     st.markdown(
         """
         <style>
-        body {
-            background-color: #f0f2f6;
-            font-family: 'Arial', sans-serif;
-        }
         .stApp {
             max-width: 1200px;
             margin: auto;
@@ -143,7 +153,7 @@ def main():
             padding: 10px;
             background: #ecf0f1;
         }
-        .prediction-box {
+        .pred-box {
             font-size: 1.5em;
             color: #2c3e50;
             background: #e8f4f8;
@@ -151,7 +161,7 @@ def main():
             border-radius: 8px;
             text-align: center;
         }
-        .sentence-box {
+        .sent-box {
             font-size: 1.2em;
             color: #34495e;
             background: #dfe6e9;
@@ -165,7 +175,6 @@ def main():
             border-radius: 5px;
             padding: 10px 20px;
             font-size: 1.1em;
-            transition: background-color 0.3s;
         }
         .stButton>button:hover {
             background-color: #2980b9;
@@ -207,9 +216,8 @@ def main():
         prediction = "None (0.00%)"
         if processor:
             prediction = f"{processor.current_letter} ({processor.current_confidence:.2f}%)"
-        st.markdown(f"<div class='prediction-box'>Predicted Letter: {prediction}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='pred-box'>Predicted Letter: {prediction}</div>", unsafe_allow_html=True)
 
-        # Buttons
         if st.button("Add Letter"):
             if processor and processor.current_letter != "None" and processor.current_confidence > 80:
                 processor.sentence += processor.current_letter
@@ -226,7 +234,7 @@ def main():
                 processor.update_sentence()
 
     # Sentence output
-    st.markdown(f"<div class='sentence-box'>Sentence: {st.session_state.sentence}</div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='sent-box'>Sentence: {st.session_state.sentence}</div>", unsafe_allow_html=True)
 
     # Footer
     st.markdown("<div class='footer'>Developed by LINK Team</div>", unsafe_allow_html=True)
