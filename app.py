@@ -91,90 +91,58 @@ labels = ['ع', 'ال', 'ا', 'ب', 'ض', 'د', 'ف', 'غ', 'ح', 'ه', 'ج', '�
           'ش', 'ط', 'ت', 'ة', 'ذ', 'ث', 'و', 'ي', 'ظ', 'ز']
 label_map = {i: label for i, label in enumerate(labels)}
 
+# Function to process a static image (fallback)
+def process_static_image(image):
+    img = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+    img = cv2.flip(img, 1)
+
+    landmarks, img_processed, hand_detected = extract_and_scale_landmarks(img)
+
+    if hand_detected:
+        landmarks = landmarks.reshape(1, 63)
+        prediction = model.predict(landmarks, verbose=0)
+        predicted_label = np.argmax(prediction, axis=1)[0]
+        confidence = np.max(prediction) * 100
+        letter = label_map[predicted_label]
+    else:
+        letter = "None"
+        confidence = 0.0
+        cv2.putText(img_processed, "No hand detected", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+
+    img_rgb = cv2.cvtColor(img_processed, cv2.COLOR_BGR2RGB)
+    results = hands.process(img_rgb)
+    if results.multi_hand_landmarks:
+        for hand_landmarks in results.multi_hand_landmarks:
+            mp_drawing.draw_landmarks(img_processed, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+
+    return img_processed, letter, confidence
+
 # Video processor class for streamlit-webrtc
 class SignLanguageProcessor(VideoProcessorBase):
     def __init__(self):
         self.current_letter = "None"
         self.current_confidence = 0.0
         self.sentence = st.session_state.get("sentence", "")
+        self.error = None
 
     def update_sentence(self):
         st.session_state.sentence = self.sentence
 
     def recv(self, frame):
-        img = frame.to_ndarray(format="bgr")
-        img = cv2.flip(img, 1)
+        try:
+            img = frame.to_ndarray(format="bgr")
+            img = cv2.flip(img, 1)
 
-        landmarks, img_processed, hand_detected = extract_and_scale_landmarks(img)
+            landmarks, img_processed, hand_detected = extract_and_scale_landmarks(img)
 
-        if hand_detected:
-            landmarks = landmarks.reshape(1, 63)
-            prediction = model.predict(landmarks, verbose=0)
-            predicted_label = np.argmax(prediction, axis=1)[0]
-            confidence = np.max(prediction) * 100
-            self.current_letter = label_map[predicted_label]
-            self.current_confidence = confidence
-        else:
-            self.current_letter = "None"
-            self.current_confidence = 0.0
-            cv2.putText(img_processed, "No hand detected", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-
-        img_rgb = cv2.cvtColor(img_processed, cv2.COLOR_BGR2RGB)
-        results = hands.process(img_rgb)
-        if results.multi_hand_landmarks:
-            for hand_landmarks in results.multi_hand_landmarks:
-                mp_drawing.draw_landmarks(img_processed, hand_landmarks, mp_hands.HAND_CONNECTIONS)
-
-        return av.VideoFrame.from_ndarray(img_processed, format="bgr")
-
-# Streamlit app
-def main():
-    # Initialize session state
-    if "sentence" not in st.session_state:
-        st.session_state.sentence = ""
-
-    # Header
-    st.title("SilenTalker: Arabic Sign Language Recognition")
-    st.write("Use your webcam to recognize Arabic sign language letters and build sentences.")
-
-    # Layout
-    col1, col2 = st.columns([2, 1])
-
-    with col1:
-        webrtc_ctx = webrtc_streamer(
-            key="sign-language",
-            video_processor_factory=SignLanguageProcessor,
-            rtc_configuration=RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}),
-            media_stream_constraints={"video": True, "audio": False},
-        )
-
-    with col2:
-        processor = webrtc_ctx.video_processor if webrtc_ctx and webrtc_ctx.video_processor else None
-        prediction = "None (0.00%)"
-        if processor:
-            prediction = f"{processor.current_letter} ({processor.current_confidence:.2f}%)"
-        st.write(f"Predicted Letter: {prediction}")
-
-        if st.button("Add Letter"):
-            if processor and processor.current_letter != "None" and processor.current_confidence > 80:
-                processor.sentence += processor.current_letter
-                processor.update_sentence()
-
-        if st.button("Backspace"):
-            if processor and processor.sentence:
-                processor.sentence = processor.sentence[:-1]
-                processor.update_sentence()
-
-        if st.button("Add Space"):
-            if processor:
-                processor.sentence += " "
-                processor.update_sentence()
-
-    # Sentence output
-    st.write(f"Sentence: {st.session_state.sentence}")
-
-    # Footer
-    st.write("Developed by LINK Team")
-
-if __name__ == "__main__":
-    main()
+            if hand_detected:
+                landmarks = landmarks.reshape(1, 63)
+                prediction = model.predict(landmarks, verbose=0)
+                predicted_label = np.argmax(prediction, axis=1)[0]
+                confidence = np.max(prediction) * 100
+                self.current_letter = label_map[predicted_label]
+                self.current_confidence = confidence
+            else:
+                self.current_letter = "None"
+                self.current_confidence = 0.0
+                cv2.putText(img_processed, "No hand detected", (10, 30), cv2.FONT
